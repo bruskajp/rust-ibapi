@@ -29,7 +29,7 @@ pub(crate) type Response = Result<ResponseMessage, Error>;
 
 // MessageBus trait - defines the interface for message handling
 #[cfg(feature = "sync")]
-pub(crate) trait MessageBus: Send + Sync {
+pub trait MessageBus: Send + Sync {
     // Sends formatted message to TWS and creates a reply channel by request id.
     fn send_request(&self, request_id: i32, packet: &RequestMessage) -> Result<InternalSubscription, Error>;
 
@@ -79,7 +79,7 @@ pub(crate) trait MessageBus: Send + Sync {
 // InternalSubscription - handles receiving messages for sync subscriptions
 #[cfg(feature = "sync")]
 #[derive(Debug, Default)]
-pub(crate) struct InternalSubscription {
+pub struct InternalSubscription {
     receiver: Option<Receiver<Response>>,              // requests with request ids receive responses via this channel
     sender: Option<Sender<Response>>,                  // requests with request ids receive responses via this channel
     shared_receiver: Option<Arc<Receiver<Response>>>,  // this channel is for responses that share channel based on message type

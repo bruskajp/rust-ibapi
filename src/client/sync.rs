@@ -151,6 +151,31 @@ impl Client {
         Client::new(connection_metadata, message_bus)
     }
 
+    /// Establishes a client connection for backtesting with a provided message bus.
+    ///
+    /// Connects to server using the given connection string
+    ///
+    /// # Arguments
+    /// * `connection_metadata` - metadata about the connection, such as client ID and server version
+    /// * `message_bus`        - message bus to use for communication with backtesting system
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ibapi::client::blocking::Client;
+    ///
+    /// let connection_metadata = ConnectionMetadata::default();
+    /// let message_bus = Arc::new(MessageBusStub::default());
+    /// let client = Client::connect_backtest(connection_metadata, message_bus).expect("connection failed");
+    ///
+    /// println!("server_version: {}", client.server_version());
+    /// println!("connection_time: {:?}", client.connection_time());
+    /// println!("next_order_id: {}", client.next_order_id());
+    /// ```
+    pub fn connect_backtest(connection_metadata: ConnectionMetadata, message_bus: Arc<dyn MessageBus>) -> Result<Client, Error> {
+        Client::new(connection_metadata, message_bus)
+    }
+
     fn new(connection_metadata: ConnectionMetadata, message_bus: Arc<dyn MessageBus>) -> Result<Client, Error> {
         let client = Client {
             server_version: connection_metadata.server_version,

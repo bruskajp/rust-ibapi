@@ -47,10 +47,10 @@ pub mod accounts;
 /// It manages the routing of messages between TWS and the application.
 pub mod client;
 
-pub(crate) mod transport;
+pub mod transport;
 
 /// Connection management
-pub(crate) mod connection;
+pub mod connection;
 
 /// Callback for handling unsolicited messages during connection setup.
 ///

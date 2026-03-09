@@ -21,6 +21,7 @@ pub mod blocking {
     };
 }
 
+
 // Re-export the appropriate Client based on feature selection
 #[cfg(feature = "async")]
 pub use r#async::Client;

@@ -12,6 +12,9 @@ mod sync_impl;
 #[cfg(feature = "async")]
 mod async_impl;
 
+// #[cfg(feature = "backtest")]
+pub mod extended_sync_impl;
+
 #[cfg(test)]
 mod tests;
 

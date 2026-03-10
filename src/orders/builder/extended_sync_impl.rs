@@ -1,9 +1,9 @@
 // -------------------------
 
-use std::{ops::Deref, sync::Arc};
+use std::{ops::Deref};
 
 use crate::{
-    client::sync::Client, connection::ConnectionMetadata, errors::Error, orders::{self, BracketOrderBuilder, BracketOrderIds, Order, OrderBuilder, OrderId}, prelude::Contract, transport::MessageBus
+    client::sync::Client, errors::Error, orders::{self, BracketOrderBuilder, Order, OrderBuilder, OrderId}, prelude::Contract,
 };
 
 /// Extended Client. Manages the whether the sync client is used for backtesting or for live.
@@ -34,7 +34,6 @@ impl ExtendedClient {
         OrderBuilder::new(self, contract)
     }
 
-    // TODO: (needed) Fix submit_oca_orders
     /// Submit multiple OCA (One-Cancels-All) orders
     ///
     /// When one order in the group is filled, all others are automatically cancelled.
@@ -61,21 +60,27 @@ impl ExtendedClient {
     ///     .oca_group("MyOCA", 1)
     ///     .build_order().expect("order build failed");
     ///
-    /// let order_ids = client.submit_oca_orders(
-    ///     vec![(contract1, order1), (contract2, order2)]
+    /// let order_infos = client.submit_oca_orders(
+    ///     vec![(contract1, order1), (contract2, order2)],
+    ///     true
     /// ).expect("OCA submission failed");
     /// ```
-    pub fn submit_oca_orders(&self, orders: Vec<(Contract, crate::orders::Order)>) -> Result<Vec<OrderId>, Error> {
-        let mut order_ids = Vec::new();
+    pub fn submit_oca_orders(&self, orders: Vec<(Contract, crate::orders::Order)>, backtest: bool) -> Result<Vec<(OrderId, Contract, Order)>, Error> {
+        let mut order_infos = Vec::new();
 
         for (contract, mut order) in orders.into_iter() {
             let order_id = self.next_order_id();
             order.order_id = order_id;
-            order_ids.push(OrderId::new(order_id));
-            println!("Backtest submit OCA order: contract={:?}, order_id={}, order={:?}", contract, order_id, order);
+            order_infos.push((OrderId::new(order_id), contract.clone(), order.clone()));
+
+            if backtest {
+                // println!("Backtest submit OCA order: contract={:?}, order_id={}, order={:?}", contract, order_id, order);
+            } else {
+                orders::blocking::submit_order(self, order_id, &contract, &order)?;
+            }
         }
 
-        Ok(order_ids)
+        Ok(order_infos)
     }
 }
 
@@ -102,14 +107,13 @@ impl<'a> OrderBuilder<'a, ExtendedClient> {
         let order = self.build()?;
 
         if backtest {
-            println!("Backtest submit order: contract={:?}, order_id={}, order={:?}", contract, order_id, order);
+            // println!("Backtest submit order: order_id={}\ncontract={:?}\norder={:?}", order_id, contract, order);
         } else {
             orders::blocking::submit_order(client, order_id, contract, &order)?;
         }
 
-        println!("Backtest submit order: contract={:?}, order_id={}, order={:?}", contract, order_id, order);
-
-        Ok((OrderId::new(order_id), contract.clone(), order))
+        let result = (OrderId::new(order_id), contract.clone(), order.clone());
+        Ok(result)
     }
 
     /// Build the order and return it without submitting
@@ -142,7 +146,8 @@ impl<'a> OrderBuilder<'a, ExtendedClient> {
 impl<'a> BracketOrderBuilder<'a, ExtendedClient> {
     /// Submit bracket orders in backtest mode (does not send to IB, simulates fill)
     /// Returns BracketOrderIds containing all three order IDs
-    pub fn submit_all(self, backtest: bool) -> Result<BracketOrderIds, Error> {
+    /// Returns the parent order ID, take profit order ID, and stop loss order ID in that order
+    pub fn submit_all(self, backtest: bool) -> Result<Vec<(OrderId, Contract, Order)>, Error> {
         let client = self.parent_builder.client;
         let contract = self.parent_builder.contract;
         let orders = self.build()?;
@@ -152,6 +157,8 @@ impl<'a> BracketOrderBuilder<'a, ExtendedClient> {
         let tp_id = client.next_order_id();
         let sl_id = client.next_order_id();
         let reserved_ids = [parent_id, tp_id, sl_id];
+
+        let mut order_infos = Vec::new();
 
         for (i, mut order) in orders.into_iter().enumerate() {
             let order_id = reserved_ids[i];
@@ -167,19 +174,21 @@ impl<'a> BracketOrderBuilder<'a, ExtendedClient> {
                 order.transmit = true;
             }
 
+            order_infos.push((OrderId::new(order_id), contract.clone(), order.clone()));
+
             if backtest {
-                println!(
-                    "Backtest submit bracket order: contract={:?}, order_id={}, parent_id={:?}, order={:?}",
-                    contract,
-                    order_id,
-                    if i == 0 { None } else { Some(parent_id) },
-                    order
-                );
+                // println!(
+                //     "Backtest submit bracket order: contract={:?}, order_id={}, parent_id={:?}, order={:?}",
+                //     contract,
+                //     order_id,
+                //     if i == 0 { None } else { Some(parent_id) },
+                //     order
+                // );
             } else {
                 orders::blocking::submit_order(client, order_id, contract, &order)?;
             }
         }
 
-        Ok(BracketOrderIds::new(parent_id, tp_id, sl_id))
+        Ok(order_infos)
     }
 }

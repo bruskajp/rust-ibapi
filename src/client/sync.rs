@@ -14,6 +14,7 @@ use time_tz::Tz;
 
 use crate::accounts::types::{AccountGroup, AccountId, ContractId, ModelCode};
 use crate::accounts::{AccountSummaryResult, AccountUpdate, AccountUpdateMulti, FamilyCode, PnL, PnLSingle, PositionUpdate, PositionUpdateMulti};
+use crate::backtest::extended_sync_impl::ExtendedClient;
 use crate::connection::common::{ConnectionOptions, StartupMessageCallback};
 use crate::connection::{sync::Connection, ConnectionMetadata};
 use crate::contracts::{Contract, OptionComputation, SecurityType};
@@ -173,7 +174,7 @@ impl Client {
     /// println!("next_order_id: {}", client.next_order_id());
     /// ```
     pub fn connect_backtest(connection_metadata: ConnectionMetadata, message_bus: Arc<dyn MessageBus>) -> Result<Client, Error> {
-        Client::new(connection_metadata, message_bus)
+        Self::new(connection_metadata, message_bus)
     }
 
     fn new(connection_metadata: ConnectionMetadata, message_bus: Arc<dyn MessageBus>) -> Result<Client, Error> {

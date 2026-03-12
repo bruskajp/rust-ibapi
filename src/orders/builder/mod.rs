@@ -14,7 +14,7 @@ mod async_impl;
 
 /// Extended Client implementation for synchronous workflows, including backtesting support.
 // #[cfg(feature = "backtest")] // TODO: (needed) Add this back in;
-pub mod extended_sync_impl;
+// pub mod extended_sync_impl;
 
 #[cfg(test)]
 mod tests;

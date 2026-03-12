@@ -1,17 +1,53 @@
 // -------------------------
 
-use std::{ops::Deref};
+use std::{ops::Deref, sync::{Arc, Mutex}};
 
 use crate::{
-    client::sync::Client, errors::Error, orders::{self, BracketOrderBuilder, Order, OrderBuilder, OrderId}, prelude::Contract,
+    backtest::exchange_2, client::{blocking::Subscription, sync::Client}, connection::ConnectionMetadata, errors::Error, orders::{self, BracketOrderBuilder, Order, OrderBuilder, OrderId}, prelude::{Contract, PositionUpdate}, transport::MessageBus
 };
+
+use super::backtest_exchange_2::IbBacktestExchange;
+use super::exchange_2::Exchange2;
 
 /// Extended Client. Manages the whether the sync client is used for backtesting or for live.
 /// Tracks some global information such as server version and server time.
 /// Supports generation of order ids.
-pub struct ExtendedClient(pub Client);
+pub struct ExtendedClient {
+    client: Client,
+    exchange: Arc<Mutex<IbBacktestExchange>>,
+}
 
 impl ExtendedClient {
+
+    pub fn new(connection_metadata: ConnectionMetadata, message_bus: Arc<dyn MessageBus>, exchange: Arc<Mutex<IbBacktestExchange>>) -> Result<ExtendedClient, Error> {
+        let client = Client::connect_backtest(connection_metadata, message_bus).unwrap().into();
+
+        Ok(ExtendedClient {
+            client,
+            exchange,
+        })
+    }
+
+    pub fn positions(&self) -> Result<Vec<PositionUpdate>, Error> {
+        // return Err(Error::Simple("Positions subscription not implemented yet".to_string()));
+        let exchange = self.exchange.lock().map_err(|e| Error::Simple(format!("Mutex poisoned: {}", e)))?;
+        let ret = exchange.get_open_positions();
+        let mut ret = ret.iter().map(|pos| PositionUpdate::Position(pos.clone())).collect::<Vec<_>>();
+        ret.push(PositionUpdate::PositionEnd);
+        Ok(ret)
+    }
+
+    pub fn global_cancel(&self) -> Result<(), Error> {
+        let mut exchange = self.exchange.lock().map_err(|e| Error::Simple(format!("Mutex poisoned: {}", e)))?;
+        let open_orders = exchange.get_open_orders().clone();
+        println!("Global cancel sent. Canceled {:?} open orders", open_orders.iter().map(|(_, order)| format!("{}", order.order_id)).collect::<Vec<_>>());
+        for (_, order) in open_orders {
+            exchange.cancel_order(order.order_id).expect("Cancel order failed...");
+        }
+        Ok(())
+
+    }
+
     /// Start building an order for the given contract
     ///
     /// This is the primary API for creating orders, providing a fluent interface
@@ -87,15 +123,15 @@ impl ExtendedClient {
 impl Deref for ExtendedClient {
     type Target = Client;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.client
     }
 }
 
-impl From<Client> for ExtendedClient {
-    fn from(c: Client) -> Self {
-        Self(c)
-    }
-}
+// impl From<Client> for ExtendedClient {
+//     fn from(c: Client, exchange: IbBacktestExchange) -> Self {
+//         Self { client: c, exchange }
+//     }
+// }
 
 impl<'a> OrderBuilder<'a, ExtendedClient> {
     /// Submit the order in backtest mode (does not send to IB, simulates fill)

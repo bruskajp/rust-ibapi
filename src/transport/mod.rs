@@ -76,6 +76,31 @@ pub trait MessageBus: Send + Sync {
     }
 }
 
+// BacktestSubscription - handles receiving messages for backtest subscriptions
+pub struct BacktestSubscription(pub InternalSubscription);
+
+impl std::ops::Deref for BacktestSubscription {
+    type Target = InternalSubscription;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl BacktestSubscription {
+    pub fn new(receiver: Receiver<Response>, sender: Sender<Response>, request_id: i32, message_type: OutgoingMessages) -> Self {
+        let internal_subscription = InternalSubscription {
+            receiver: Some(receiver),
+            sender: Some(sender),
+            shared_receiver: None,
+            signaler: None,
+            request_id: Some(request_id),
+            order_id: None,
+            message_type: Some(message_type),
+        };
+        BacktestSubscription(internal_subscription)
+    }
+}
+
 // InternalSubscription - handles receiving messages for sync subscriptions
 #[cfg(feature = "sync")]
 #[derive(Debug, Default)]

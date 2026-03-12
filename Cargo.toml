@@ -31,6 +31,7 @@ sync = ["dep:crossbeam"]
 async = ["dep:tokio", "dep:futures", "dep:async-trait"]
 proto = ["dep:prost"]
 utoipa = ["dep:utoipa"]
+#backtest = ["dep:chrono", "dep:chrono-tz", "dep:plotly", "dep:polars"]
 
 [dependencies]
 byteorder = "1.5.0"
@@ -48,6 +49,13 @@ utoipa = { version = "5", optional = true, features = ["time"] }
 tokio = { version = "1.41", features = ["net", "rt-multi-thread", "sync", "time", "macros", "io-util"], optional = true }
 futures = { version = "0.3.31", optional = true }
 async-trait = { version = "0.1.83", optional = true }
+
+# Backtest dependencies
+anyhow = { version = "1.0.102" } # , optional = true }
+chrono = { version = "0.4.41" } # , optional = true }
+chrono-tz = { version = "0.10.4" } # , optional = true }
+plotly = { version = "0.14.1" } # , optional = true }
+polars = { version = "0.53.0", features = ["csv", "lazy", "dtype-datetime"]} # , optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.92"

@@ -49,6 +49,8 @@ pub mod client;
 
 pub mod transport;
 
+pub mod backtest;
+
 /// Connection management
 pub mod connection;
 

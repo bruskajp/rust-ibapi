@@ -40,8 +40,8 @@ impl ExtendedClient {
     pub fn global_cancel(&self) -> Result<(), Error> {
         let mut exchange = self.exchange.lock().map_err(|e| Error::Simple(format!("Mutex poisoned: {}", e)))?;
         let open_orders = exchange.get_open_orders().clone();
-        println!("Global cancel sent. Canceled {:?} open orders", open_orders.iter().map(|(_, order)| format!("{}", order.order_id)).collect::<Vec<_>>());
-        for (_, order) in open_orders {
+        println!("Global cancel sent. Canceled {:?} open orders", open_orders.iter().map(|(_, order, _)| format!("{}", order.order_id)).collect::<Vec<_>>());
+        for (_, order, _) in open_orders {
             exchange.cancel_order(order.order_id).expect("Cancel order failed...");
         }
         Ok(())

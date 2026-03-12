@@ -1,3 +1,5 @@
+use std::os::unix;
+
 use crate::accounts::Position;
 use crate::orders::{Action, Order};
 use crate::prelude::Contract;
@@ -8,6 +10,7 @@ use chrono::offset::LocalResult;
 use anyhow::*;
 
 use super::types::Ohlcv;
+use super::utils::unix_us_to_datetime;
 
 use super::exchange_2::Exchange2;
 
@@ -18,8 +21,8 @@ pub struct IbBacktestExchange {
     current_idx: usize,
     started: bool,
 
-    open_orders: Vec<(Contract, Order)>,
-    completed_orders: Vec<(Contract, Order)>,
+    open_orders: Vec<(Contract, Order, DateTime<Utc>)>,
+    completed_orders: Vec<(Contract, Order, DateTime<Utc>, f64, f64)>,
     signal_id_counter: u64,
 
     open_positions: Vec<Position>,
@@ -122,7 +125,7 @@ impl Exchange2 for IbBacktestExchange {
         };
 
         // Compute which orders to complete
-        for (contract, order) in self.open_orders.clone() {
+        for (contract, order, ts) in self.open_orders.clone() {
             let current_position = self.open_positions.iter().find(|p| p.contract == contract);
             if current_position.is_none() {
                 self.open_positions.push(create_backtest_position(contract.clone(), 0.0, 0.0));
@@ -130,15 +133,17 @@ impl Exchange2 for IbBacktestExchange {
             let current_position = self.open_positions.iter_mut().find(|p| p.contract == contract).unwrap();
             if order.order_type == "MKT" { // Market order
                 match order.action {
-                    Action::Buy =>
-                        current_position.position += order.total_quantity,
-                    Action::Sell =>
+                    Action::Buy => {
+                        current_position.position += order.total_quantity;
+                    },
+                    Action::Sell => {
                         // return Err(anyhow!("Market sell orders are not supported in this backtest implementation because it can lead to unrealistic fills. Please use limit orders with a reasonable limit price instead.")),
-                        current_position.position -= order.total_quantity,
+                        current_position.position -= order.total_quantity;
+                    },
                     _ => return Err(anyhow!("Unknown order action: {}", order.action)),
                 };
-                self.completed_orders.push((contract.clone(), order.clone()));
-                self.open_orders.retain(|(_, o)| o.order_id != order.order_id);
+                self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, ohlcv.open, current_position.position));
+                self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                 println!("Filled {} market order for {} contracts", order.action, order.total_quantity);
             } else if order.order_type == "STP" { // Stop Loss
                 let stop_price = order.aux_price.unwrap();
@@ -146,18 +151,18 @@ impl Exchange2 for IbBacktestExchange {
                     Action::Buy => {
                         if ohlcv.high >= stop_price {
                             current_position.position += order.total_quantity;
-                            self.completed_orders.push((contract.clone(), order.clone()));
-                            self.open_orders.retain(|(_, o)| o.order_id != order.order_id);
-                            self.open_orders.retain(|(_, o)| o.parent_id != order.parent_id);
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
                             println!("Filled BUY stop order at price {} (current high {})", stop_price, ohlcv.high);
                         }
                     },
                     Action::Sell => {
                         if ohlcv.low <= stop_price {
                             current_position.position -= order.total_quantity;
-                            self.completed_orders.push((contract.clone(), order.clone()));
-                            self.open_orders.retain(|(_, o)| o.order_id != order.order_id);
-                            self.open_orders.retain(|(_, o)| o.parent_id != order.parent_id);
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
                             println!("Filled SELL stop order at price {} (current low {})", stop_price, ohlcv.low);
                         }
                     },
@@ -168,27 +173,27 @@ impl Exchange2 for IbBacktestExchange {
                 match order.action {
                     Action::Buy => {
                         if ohlcv.low <= limit_price {
-                            let bracket_orders = self.open_orders.iter().filter(|(_, o)| o.parent_id == order.parent_id).collect::<Vec<_>>();
+                            let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
                             if bracket_orders.len() == 0 {
                                 return Err(anyhow!("Limit order {} does not have its corresponding stop loss bracket order. This means that the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.", order.order_id));
                             }
                             current_position.position += order.total_quantity;
-                            self.completed_orders.push((contract.clone(), order.clone()));
-                            self.open_orders.retain(|(_, o)| o.order_id != order.order_id);
-                            self.open_orders.retain(|(_, o)| o.parent_id != order.parent_id);
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
                             println!("Filled BUY limit order at price {} (current low {})", limit_price, ohlcv.low);
                         }
                     },
                     Action::Sell => {
                         if ohlcv.high >= limit_price {
-                            let bracket_orders = self.open_orders.iter().filter(|(_, o)| o.parent_id == order.parent_id).collect::<Vec<_>>();
+                            let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
                             if bracket_orders.len() == 0 {
                                 return Err(anyhow!("Limit order {} does not have its corresponding stop loss bracket order. This means that the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.", order.order_id));
                             }
                             current_position.position -= order.total_quantity;
-                            self.completed_orders.push((contract.clone(), order.clone()));
-                            self.open_orders.retain(|(_, o)| o.order_id != order.order_id);
-                            self.open_orders.retain(|(_, o)| o.parent_id != order.parent_id);
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
                             println!("Filled SELL limit order at price {} (current high {})", limit_price, ohlcv.high);
                         }
                     },
@@ -205,13 +210,13 @@ impl Exchange2 for IbBacktestExchange {
     }
 
     // fn order(&mut self, pos: Position, amt: f64, stop_loss: Option<f64>, take_profit: Option<f64>) -> Result<Signal> {
-    fn order(&mut self, order: Order, contract: Contract) -> Result<()> {
+    fn order(&mut self, order: Order, contract: Contract, datetime: DateTime<Utc>) -> Result<()> {
         // let ts = self.data.column("datetime")?.datetime()?.physical().get(self.current_idx).unwrap();
 
         println!("Placed {} order {} of {}", contract.symbol, order.order_id, order.order_type);
 
         // TODO: (needed) I need to cancel LIMIT orders somehow!!!
-        self.open_orders.push((contract, order));
+        self.open_orders.push((contract, order, datetime));
         self.signal_id_counter += 1;
 
         for order in self.open_orders.iter() {
@@ -226,15 +231,15 @@ impl Exchange2 for IbBacktestExchange {
     }
 
     fn cancel_order(&mut self, order_id: i32) -> Result<()> {
-        self.open_orders.retain(|(_, o)| o.order_id != order_id);
+        self.open_orders.retain(|(_, o, _)| o.order_id != order_id);
         Ok(())
     }
 
-    fn get_open_orders(&self) -> &Vec<(Contract, Order)> {
+    fn get_open_orders(&self) -> &Vec<(Contract, Order, DateTime<Utc>)> {
         &self.open_orders
     }
 
-    fn get_completed_orders(&self) -> &Vec<(Contract, Order)> {
+    fn get_completed_orders(&self) -> &Vec<(Contract, Order, DateTime<Utc>, f64, f64)> {
         &self.completed_orders
     }
 
@@ -243,13 +248,11 @@ impl Exchange2 for IbBacktestExchange {
     }
 }
 
+
+
 pub fn get_date_from_col(col: &ChunkedArray<Int64Type>, idx: usize) -> Result<DateTime<Utc>> {
-    let ts = col.get(idx).unwrap();
-    match Utc.timestamp_micros(ts) {
-        LocalResult::Single(datetime) => Ok(datetime),
-        LocalResult::Ambiguous(datetime1, datetime2) => Err(anyhow!("Ambiguous timestamp: {} could be either {} or {}", ts, datetime1, datetime2)),
-        LocalResult::None => Err(anyhow!("Invalid timestamp: {}", ts)),
-    }
+    let ts = col.get(idx)        .ok_or_else(|| anyhow!("Index {} is out of bounds for datetime column with length {}", idx, col.len()))?;
+    unix_us_to_datetime(ts)
 }
 
 pub fn get_date(data: &DataFrame, idx: usize) -> Result<DateTime<Utc>> {

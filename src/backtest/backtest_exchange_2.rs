@@ -144,7 +144,7 @@ impl Exchange2 for IbBacktestExchange {
                 };
                 self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, ohlcv.open, current_position.position));
                 self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
-                println!("Filled {} market order for {} contracts", order.action, order.total_quantity);
+                // println!("Filled {} market order for {} contracts", order.action, order.total_quantity);
             } else if order.order_type == "STP" { // Stop Loss
                 let stop_price = order.aux_price.unwrap();
                 match order.action {
@@ -154,7 +154,7 @@ impl Exchange2 for IbBacktestExchange {
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            println!("Filled BUY stop order at price {} (current high {})", stop_price, ohlcv.high);
+                            // println!("Filled BUY stop order at price {} (current high {})", stop_price, ohlcv.high);
                         }
                     },
                     Action::Sell => {
@@ -163,7 +163,7 @@ impl Exchange2 for IbBacktestExchange {
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            println!("Filled SELL stop order at price {} (current low {})", stop_price, ohlcv.low);
+                            // println!("Filled SELL stop order at price {} (current low {})", stop_price, ohlcv.low);
                         }
                     },
                     _ => return Err(anyhow!("Unknown order action: {}", order.action)),
@@ -181,7 +181,7 @@ impl Exchange2 for IbBacktestExchange {
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            println!("Filled BUY limit order at price {} (current low {})", limit_price, ohlcv.low);
+                            // println!("Filled BUY limit order at price {} (current low {})", limit_price, ohlcv.low);
                         }
                     },
                     Action::Sell => {
@@ -194,7 +194,7 @@ impl Exchange2 for IbBacktestExchange {
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            println!("Filled SELL limit order at price {} (current high {})", limit_price, ohlcv.high);
+                            // println!("Filled SELL limit order at price {} (current high {})", limit_price, ohlcv.high);
                         }
                     },
                     _ => return Err(anyhow!("Unknown order action: {}", order.action)),
@@ -213,19 +213,18 @@ impl Exchange2 for IbBacktestExchange {
     fn order(&mut self, order: Order, contract: Contract, datetime: DateTime<Utc>) -> Result<()> {
         // let ts = self.data.column("datetime")?.datetime()?.physical().get(self.current_idx).unwrap();
 
-        println!("Placed {} order {} of {}", contract.symbol, order.order_id, order.order_type);
+        // println!("Placed {} order {} of {}", contract.symbol, order.order_id, order.order_type);
 
-        // TODO: (needed) I need to cancel LIMIT orders somehow!!!
         self.open_orders.push((contract, order, datetime));
         self.signal_id_counter += 1;
 
         for order in self.open_orders.iter() {
-            println!("Open order: contract={}, order_id={}, type={}, parent_id={}", order.0.symbol, order.1.order_id, order.1.order_type, order.1.parent_id);
+            // println!("Open order: contract={}, order_id={}, type={}, parent_id={}", order.0.symbol, order.1.order_id, order.1.order_type, order.1.parent_id);
         }   
         for pos in self.open_positions.iter() {
-            println!("Position: {} {}", pos.contract.symbol, pos.position);
+            // println!("Position: {} {}", pos.contract.symbol, pos.position);
         }
-        println!("---");
+        // println!("---");
 
         Ok(())
     }

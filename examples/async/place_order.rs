@@ -110,10 +110,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Place both orders
     let subscription1 = client.place_order(order_id1, &contract, &order1).await?;
-    println!("Placed order {order_id1}");
+    // println!("Placed order {order_id1}");
 
     let subscription2 = client.place_order(order_id2, &contract, &order2).await?;
-    println!("Placed order {order_id2}");
+    // println!("Placed order {order_id2}");
 
     // Monitor both orders concurrently
     let handle1 = tokio::spawn(monitor_order(order_id1, subscription1));

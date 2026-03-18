@@ -1,6 +1,8 @@
 use std::os::unix;
+use std::process::exit;
 
 use crate::accounts::Position;
+use crate::orders::blocking::open_orders;
 use crate::orders::{Action, Order};
 use crate::prelude::Contract;
 use polars::prelude::search_sorted::binary_search_ca;
@@ -31,15 +33,22 @@ pub struct IbBacktestExchange {
 
 impl IbBacktestExchange {
     pub fn new(data: DataFrame, start_ts: Option<DateTime<Utc>>, end_ts: Option<DateTime<Utc>>) -> Result<Self> {
+        if let Some(start) = start_ts {
+            let last_ts = get_date(&data, data.height() - 1)?;
+            if start > last_ts {
+                return Err(anyhow!("Error: start_ts {} is after the last timestamp in the data {}. Adjust start_ts to be before {}!", start, last_ts, last_ts));
+            }
+            if let Some(end) = end_ts {
+                if end < start {
+                    return Err(anyhow!("Error: end_ts {} is before the start_ts {}. Adjust end_ts to be after {} or adjust the start_ts to be before {}!", end, start, start, end));
+                }
+            }
+        }
+
         // Set the dates if not provided, using the first and last timestamps from the DataFrame
         let dates = data.column("datetime")?.datetime()?.physical();
-        let first_ts = get_date_from_col(dates, 0)?;
-        let last_ts = get_date_from_col(dates, data.height() - 1)?;
         let start_idx = match start_ts {
             Some(ts) => {
-                // if ts < first_ts || ts > last_ts {
-                //     return Err(anyhow!("Start timestamp {} is out of bounds of the data range {} - {}", ts, first_ts, last_ts));
-                // }
                 find_next_valid_timestamp_idx(dates, ts)
             },
             None => 0,
@@ -48,9 +57,6 @@ impl IbBacktestExchange {
 
         let end_idx = match end_ts {
             Some(ts) => {
-                if ts < first_ts || ts > last_ts {
-                    return Err(anyhow!("End timestamp {} is out of bounds of the data range {} - {}", ts, first_ts, last_ts));
-                }
                 find_next_valid_timestamp_idx(dates, ts)
             },
             None => data.height() - 1,
@@ -144,26 +150,45 @@ impl Exchange2 for IbBacktestExchange {
                 };
                 self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, ohlcv.open, current_position.position));
                 self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
-                // println!("Filled {} market order for {} contracts", order.action, order.total_quantity);
+                if order.oca_group != "" {
+                    self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                }
+                // println!("Filled {} market order at price {} at {}", order.action, ohlcv.open, unix_us_to_datetime(ohlcv.datetime)?);
             } else if order.order_type == "STP" { // Stop Loss
                 let stop_price = order.aux_price.unwrap();
                 match order.action {
                     Action::Buy => {
                         if ohlcv.high >= stop_price {
+                            let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
+                            if bracket_orders.len() == 0 {
+                                eprintln!("On order {}, the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
+                            }
                             current_position.position += order.total_quantity;
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            // println!("Filled BUY stop order at price {} (current high {})", stop_price, ohlcv.high);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled BUY stop order at price {} (current high {}) at {}", stop_price, ohlcv.high, unix_us_to_datetime(ohlcv.datetime)?);
                         }
                     },
                     Action::Sell => {
                         if ohlcv.low <= stop_price {
+                            let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
+                            if bracket_orders.len() == 0 {
+                                eprintln!("On order {}, the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
+                            }
                             current_position.position -= order.total_quantity;
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            // println!("Filled SELL stop order at price {} (current low {})", stop_price, ohlcv.low);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled SELL stop order at price {} (current low {}) at {}", stop_price, ohlcv.low, unix_us_to_datetime(ohlcv.datetime)?);
                         }
                     },
                     _ => return Err(anyhow!("Unknown order action: {}", order.action)),
@@ -175,26 +200,81 @@ impl Exchange2 for IbBacktestExchange {
                         if ohlcv.low <= limit_price {
                             let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
                             if bracket_orders.len() == 0 {
-                                return Err(anyhow!("Limit order {} does not have its corresponding stop loss bracket order. This means that the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.", order.order_id));
+                                eprintln!("On order {}, the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
                             }
                             current_position.position += order.total_quantity;
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            // println!("Filled BUY limit order at price {} (current low {})", limit_price, ohlcv.low);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled BUY limit order at price {} (current low {}) at {}", limit_price, ohlcv.low, unix_us_to_datetime(ohlcv.datetime)?);
                         }
                     },
                     Action::Sell => {
                         if ohlcv.high >= limit_price {
                             let bracket_orders = self.open_orders.iter().filter(|(_, o, _)| o.parent_id == order.parent_id).collect::<Vec<_>>();
                             if bracket_orders.len() == 0 {
-                                return Err(anyhow!("Limit order {} does not have its corresponding stop loss bracket order. This means that the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.", order.order_id));
+                                eprintln!("On order {}, the backtesting algorithm hit the stop loss AND the take profit in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
                             }
                             current_position.position -= order.total_quantity;
                             self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, limit_price, current_position.position));
                             self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
                             self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
-                            // println!("Filled SELL limit order at price {} (current high {})", limit_price, ohlcv.high);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled SELL limit order at price {} (current high {}) at {}", limit_price, ohlcv.high, unix_us_to_datetime(ohlcv.datetime)?);
+                        }
+                    },
+                    _ => return Err(anyhow!("Unknown order action: {}", order.action)),
+                };
+            } else if order.order_type == "TRAIL" {
+                let stop_price = order.trail_stop_price.unwrap();
+                match order.action {
+                    Action::Buy => {
+                        if ohlcv.high >= stop_price {
+                            let oca_orders = self.open_orders.iter().filter(|(_, o, _)| o.oca_group == order.oca_group).collect::<Vec<_>>();
+                            if oca_orders.len() == 0 {
+                                eprintln!("On order {}, the backtesting algorithm hit all the OCA orders in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
+                            }
+                            current_position.position += order.total_quantity;
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled BUY stop order at price {} (current high {}) at {}", stop_price, ohlcv.high, unix_us_to_datetime(ohlcv.datetime)?);
+                        } else {
+                            let potential_new_stop = ohlcv.low * (1.0 + order.trailing_percent.unwrap() / 100.0);
+                            let (_, editable_order, _) = self.open_orders.iter_mut().find(|(_, o, _)| o.order_id == order.order_id).unwrap();
+                            editable_order.trail_stop_price = Some(stop_price.min(potential_new_stop));
+                        }
+                    },
+                    Action::Sell => {
+                        if ohlcv.low <= stop_price {
+                            let oca_orders = self.open_orders.iter().filter(|(_, o, _)| o.oca_group == order.oca_group).collect::<Vec<_>>();
+                            if oca_orders.len() == 0 {
+                                eprintln!("On order {}, the backtesting algorithm hit all the OCA orders in the same candlestick. Please use higher resolution data or change your algorithm.\n", order.order_id);
+                                continue;
+                            }
+                            current_position.position -= order.total_quantity;
+                            self.completed_orders.push((contract.clone(), order.clone(), unix_us_to_datetime(ohlcv.datetime)?, stop_price, current_position.position));
+                            self.open_orders.retain(|(_, o, _)| o.order_id != order.order_id);
+                            self.open_orders.retain(|(_, o, _)| o.parent_id != order.parent_id);
+                            if order.oca_group != "" {
+                                self.open_orders.retain(|(_, o, _)| o.oca_group != order.oca_group);
+                            }
+                            // println!("Filled SELL stop order at price {} (current low {}) at {}", stop_price, ohlcv.low, unix_us_to_datetime(ohlcv.datetime)?);
+                        } else {
+                            let potential_new_stop = ohlcv.high * (1.0 - order.trailing_percent.unwrap() / 100.0);
+                            let (_, editable_order, _) = self.open_orders.iter_mut().find(|(_, o, _)| o.order_id == order.order_id).unwrap();
+                            editable_order.trail_stop_price = Some(stop_price.max(potential_new_stop));
                         }
                     },
                     _ => return Err(anyhow!("Unknown order action: {}", order.action)),
@@ -202,7 +282,7 @@ impl Exchange2 for IbBacktestExchange {
             } else {
                 return Err(anyhow!("Unknown order type: {}", order.order_type));
             }
-        }
+        } 
 
         self.open_positions.retain(|p| p.position != 0.0);
 
@@ -214,6 +294,7 @@ impl Exchange2 for IbBacktestExchange {
         // let ts = self.data.column("datetime")?.datetime()?.physical().get(self.current_idx).unwrap();
 
         // println!("Placed {} order {} of {}", contract.symbol, order.order_id, order.order_type);
+        // println!("Placed {} order for {} with stop loss {:?} and take profit {:?} at {}", order.action, order.total_quantity, order.limit_price.unwrap_or(0.0), order.aux_price.unwrap_or(0.0), datetime);
 
         self.open_orders.push((contract, order, datetime));
         self.signal_id_counter += 1;
@@ -250,7 +331,7 @@ impl Exchange2 for IbBacktestExchange {
 
 
 pub fn get_date_from_col(col: &ChunkedArray<Int64Type>, idx: usize) -> Result<DateTime<Utc>> {
-    let ts = col.get(idx)        .ok_or_else(|| anyhow!("Index {} is out of bounds for datetime column with length {}", idx, col.len()))?;
+    let ts = col.get(idx).ok_or_else(|| anyhow!("Index {} is out of bounds for datetime column with length {}", idx, col.len()))?;
     unix_us_to_datetime(ts)
 }
 
@@ -266,6 +347,17 @@ pub fn find_next_valid_timestamp_idx(col: &ChunkedArray<Int64Type>, current_ts: 
             col,
             std::iter::once(Some(cutoff)),
             SearchSortedSide::Left, // "left" insertion point
-            false,                  // descending = false (ascending)
+            false,            // descending = false (ascending)
         )[0] as usize
+}
+
+pub fn find_prev_valid_timestamp_idx(col: &ChunkedArray<Int64Type>, current_ts: DateTime<Utc>) -> usize {
+    let cutoff = current_ts.timestamp_micros();
+    // col.into_no_null_iter().rposition(|v| v <= cutoff).unwrap_or(0);
+    binary_search_ca(
+            col,
+            std::iter::once(Some(cutoff)),
+            SearchSortedSide::Right, // "right" insertion point
+            false,             // descending = false (ascending)
+        )[0] as usize - 1
 }

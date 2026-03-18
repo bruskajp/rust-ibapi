@@ -28,6 +28,7 @@ impl ExtendedClient {
         })
     }
 
+    // TODO: (needed) Change this to Subscription<PositionUpdate>
     pub fn positions(&self) -> Result<Vec<PositionUpdate>, Error> {
         // return Err(Error::Simple("Positions subscription not implemented yet".to_string()));
         let exchange = self.exchange.lock().map_err(|e| Error::Simple(format!("Mutex poisoned: {}", e)))?;

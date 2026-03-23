@@ -1,11 +1,35 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ohlcv {
-    pub datetime: i64,
+    pub datetime: i64, // Unix timestamp in microseconds
     pub open: f64,
     pub high: f64,
     pub low: f64,
     pub close: f64,
     pub volume: i64,
+}
+
+impl Ohlcv {
+    pub fn new(datetime: i64, open: f64, high: f64, low: f64, close: f64, volume: i64) -> Self {
+        Ohlcv {
+            datetime,
+            open,
+            high,
+            low,
+            close,
+            volume,
+        }
+    }
+
+    pub fn new_zero() -> Self {
+        Ohlcv {
+            datetime: 0,
+            open: 0.0,
+            high: 0.0,
+            low: 0.0,
+            close: 0.0,
+            volume: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
